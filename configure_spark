@@ -1,0 +1,110 @@
+************************
+Running Spark on Yarn:
+************************
+
+Resource Planning (Static Allocation):
+----------------------------------------
+Find the total number of executors, number of cores on a yarn cluster?
+
+Let us assume that we have a 10-node cluster with the following configurations:
+Each node has 127 GB RAM and 16 cores.
+ 
+1. Allocate 1 GB and 1 core of each node for Operating System and Hadoop Daemons.
+Available Memory (RAM) per Node: 126GB
+Available Cores per Node: 15
+ 
+2. Number of Cores per each executor: Concurrent tasks an executor can ran
+We should not exceed the number of cores per executor more than 5 due to high HDFS throughput.
+Number of cores per executor = 5
+ 
+3. Number of Executors per node:
+We have left with 15 cores per node and we have chosen 5 cores per executor
+Number of Executors per node = number of available cores per node / number of cores per executor
+                                                            	15/ 5 = 3
+
+4. Number of Executors:
+We have total nodes 10 and number of executors per node is 3
+Number of Executors = Number of nodes * number of executors per node
+                                            	10 * 3 = 30
+Out of 30 we need 1 executor for application master in yarn.
+So total number of executors = 29
+This 29 is the number we give to spark using property --num-executors while running from spark-submit shell command.
+ 
+5. Memory of each executor:
+We have 3 executors per node and per node we have left with 126 GB
+Memory of Each Executor = Memory Available per node / number of executors per node
+
+                                            	  	126/3 = 42 GB per executor
+However small overhead memory is also needed to determine the full memory request to YARN for each executor.
+The formula for that overhead is max (384, 0.07 * spark.executor.memory)
+Calculating the overhead: .07 * 42 = 2.94 GB
+Since 2.94 GB > 384 MB, the overhead is 2.94
+So, cut the above overhead from each 42 = 42 – 2.94 = 39 GB
+ 
+num-executors 29, executor-memory 39 g, executors-cores 5
+
+
+Resource planning for a given dataset:
+----------------------------------------
+Find the number of executors, number of cores in order to execute spark application on the cluster using yarn as resource manager
+
+Let us assume that we have a 100GB file, following is the technique to configure:
+
+1. Convert GB – MB: 100 * 1024 = 1,02,400MB
+2. Spark treats each partition size as 128MB (this is the case when dataset is uncompressed and splittable
+   else partition size is equal to file size): 800 partition
+3. Task are processed by cores, now we need to process 800 partition i.e. 800 tasks
+   spark.sql.shuffle.partitions = 800
+4. To utilize the capability of cores we decide the load factor i.e. based on transformation
+   Here the transformation is narrow and load factor is assumed to be 10: 800/10 = 80
+   Note: Try decreasing the load factor when the transformation is wide and CPU intensive
+5. As per best practice each executor can be assigned with 5-8 cores
+   Here we assign 5 cores per executor: 80/5 = 16
+
+Hence to process an uncompressed 100GB file with narrow transformation and with load factor of 10 per core can be processed with
+following: 
+num-executors 16, executors-cores 5
+
+
+spark-submit:
+-------------
+spark-submit --class < > --master yarn --deploy-mode < > --driver-cores < > --driver-memory < >g --num-executors < >
+--executor-cores < > --executor-memory < >g  --queue < > --conf spark.sql.shuffle.partitions=< >
+--conf spark.dynamicAllocation.enabled=<true/false> --conf spark.sql.autoBroadcastJoinThreshold=< >
+
+Note: < > need to be replaced with derived values, add up other properties based on requirement
+
+errors:
+-------
+
+java.lang.OutOfMemoryError: 
+
+1. Executor: java heap space on the executor’s nodes 
+ 
+ java.lang.OutOfMemoryError: 
+ GC overhead limit exceeded org.apache.spark.shuffle.FetchFailedException
+ Above errors indicate that application runs out of heap space on the executors.
+ 
+Solutions:
+1. Try increasing executor memory or executor memory overhead to a value that is suitable for our application.
+2. Increase the number of partitions.
+3. Allocate sufficient storage memory (increase ‘spark.memory.storageFraction’) for caching data
+   and only cache them if they are being re-used.
+4. While joining two datasets where one of them is considerably smaller in size, broadcasting the smaller dataset.
+
+Set spark.sql.autoBroadcastJoinThreshold to a value equal to or greater than the size of the smaller dataset.
+
+
+
+2. Driver: Java heap space on the driver node, This is due that application runs out of heap space on the driver node.
+ 
+Solutions:
+1. Try increasing driver memory or driver memory overhead if it set to a lower value
+
+Reasons:
+1. When an application has a really large number of tasks (partitions), an OOM on the driver end occur easily.
+   Every task sends a map status object back to the driver. The map status contains location information for the tasks which
+   is sent back to the drive. A large number of tasks would lead to the driver receiving a lot of data. 
+2. When we have an application that is performing actions on the data that ends up collecting the result on the driver end,
+   for example a collect() on the data is an unsafe operation that can lead to an OOM if the collected size is larger than
+   the what the driver can house in its memory.
