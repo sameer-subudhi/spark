@@ -1,0 +1,13 @@
+# Cofiguration to run this job
+--jobType
+csvtoparquet
+--schemaName
+comscore
+--tableName
+time_table
+--delimiter
+,
+--inputPath
+inputdata.csv
+--outputPath
+output.csv
